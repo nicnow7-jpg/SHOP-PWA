@@ -1,0 +1,88 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Shop</title><link rel="stylesheet" href="/style.css">
+<link rel="manifest" href="/api/manifest">
+<meta name="theme-color" content="#0f5c3a">
+<link rel="icon" type="image/png" href="/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Shop"></head><body>
+<header><h1 id="shop">Shop</h1><input id="q" type="search" placeholder="Search items" aria-label="Search items">
+<button id="inst" class="ghost" hidden>Install app</button><button id="acct" class="ghost">Log in</button><button id="cartBtn">Cart (0)</button></header>
+<nav id="cats"></nav><main><div id="grid" class="grid"></div><p id="empty" class="muted" hidden>No items match your search.</p></main>
+
+<dialog id="authD"><h2 id="authT">Log in</h2>
+<form id="authF"><div class="row" id="nameRow" hidden><input id="name" placeholder="Your name" autocomplete="name"></div>
+<div class="row"><input id="phone" type="tel" placeholder="Phone number (0241234567)" autocomplete="tel" required></div>
+<div class="row"><input id="pw" type="password" placeholder="Password" autocomplete="current-password" required></div>
+<div class="row"><button class="green grow" id="authB">Log in</button><button type="button" class="ghost" onclick="authD.close()">Close</button></div></form>
+<p class="muted"><a href="#" id="swap">New here? Create an account</a></p></dialog>
+
+<dialog id="cartD"><h2>Your cart</h2><div id="lines"></div>
+<div class="notice">Pickup only. You pay by Mobile Money after placing the order, then collect when it is ready.</div>
+<div class="row"><b class="grow" id="total"></b><button class="green" id="checkout">Place order</button><button class="ghost" onclick="cartD.close()">Close</button></div></dialog>
+
+<dialog id="ordD"><h2>Order history</h2><div id="ords"></div><button class="ghost" onclick="ordD.close()">Close</button></dialog>
+<script src="/common.js"></script>
+<script>
+let orderList = [], me = null, shop = {}, items = [], cat = '', mode = 'login', cart = JSON.parse(localStorage.cart || '{}');
+const saveCart = () => { localStorage.cart = JSON.stringify(cart); renderCart(); };
+const byId = id => items.find(i => i.id == id);
+
+function renderTop() {
+  $('#shop').textContent = shop.shop_name || 'Shop'; document.title = shop.shop_name || 'Shop';
+  $('#acct').textContent = me ? `${me.name.split(' ')[0]} · Orders` : 'Log in';
+  const cats = [...new Set(items.map(i => i.category))];
+  $('#cats').innerHTML = ['', ...cats].map(c => `<button class="${c === cat ? 'on' : ''}" data-c="${esc(c)}">${esc(c || 'All')}</button>`).join('');
+}
+function renderGrid() {
+  const q = $('#q').value.toLowerCase(), list = items.filter(i => (!cat || i.category === cat) && (i.name + i.description).toLowerCase().includes(q));
+  $('#empty').hidden = list.length > 0;
+  $('#grid').innerHTML = list.map(i => `<article class="item"><img src="${esc(i.img)}" alt="${esc(i.name)}" loading="lazy"><div>
+    <span>${esc(i.name)}</span><b class="price">${cur(i.price)}</b><span class="muted">${i.stock > 0 ? i.stock + ' in stock' : 'Out of stock'}</span>
+    <span style="display:flex;gap:.4rem"><input class="qn" id="qn${i.id}" type="number" min="1" max="${i.stock}" value="1" aria-label="Quantity" ${i.stock < 1 ? 'disabled' : ''}><button style="flex:1" data-add="${i.id}" ${i.stock < 1 ? 'disabled' : ''}>Add to cart</button></span></div></article>`).join('');
+}
+function renderCart() {
+  let n = 0, total = 0;
+  for (const id in cart) { const it = byId(id); if (!it) { delete cart[id]; continue; } cart[id] = Math.min(cart[id], it.stock); if (cart[id] < 1) { delete cart[id]; continue; } n += cart[id]; total += cart[id] * it.price; }
+  $('#cartBtn').textContent = `Cart (${n})`; $('#total').textContent = 'Total ' + cur(total); $('#checkout').disabled = !n;
+  $('#lines').innerHTML = n ? Object.entries(cart).map(([id, q]) => { const it = byId(id); return `<div class="row"><img class="thumb" src="${esc(it.img)}" alt=""><span class="grow">${esc(it.name)}<br><span class="muted">${cur(it.price)}</span></span>
+    <button class="ghost" data-dec="${id}" aria-label="Fewer">−</button><b>${q}</b><button class="ghost" data-inc="${id}" aria-label="More">+</button></div>`; }).join('') : '<p class="muted">Your cart is empty. Add something from the shop.</p>';
+}
+async function renderOrders() {
+  const os = orderList = await api('/orders');
+  $('#ords').innerHTML = os.length ? os.map(o => `<div class="card"><div class="row"><b class="grow">${o.code} <span class="muted">${new Date(o.created).toLocaleDateString()}</span></b><span class="pill ${o.status}">${LABEL[o.status]}</span></div>
+    <div class="muted">${o.items.map(l => `${l.qty} × ${esc(l.name)}`).join(', ')}</div><b>${cur(o.total)}</b> <button class="ghost" data-again="${o.id}">Buy again</button>
+    ${o.status === 'awaiting_payment' ? `<div class="notice">Send <b>${cur(o.total)}</b> by MoMo to <b>${esc(shop.momo_number)}</b> (${esc(shop.momo_name)}). Use <b>${o.code}</b> as the reference.</div>
+      <div class="row"><input id="ref${o.id}" placeholder="MoMo transaction ID"><button class="green" data-paid="${o.id}">I have paid</button></div>
+      <button class="ghost" data-cancel="${o.id}">Cancel order</button>` : ''}
+    ${o.status === 'ready' ? `<div class="notice">Ready. Collect at: ${esc(shop.pickup_address)}. Show your order code ${o.code}.</div>` : ''}</div>`).join('') : '<p class="muted">You have no orders yet.</p>';
+}
+function authMode(m) { mode = m; $('#authT').textContent = $('#authB').textContent = m === 'login' ? 'Log in' : 'Create account';
+  $('#nameRow').hidden = m === 'login'; $('#swap').textContent = m === 'login' ? 'New here? Create an account' : 'Have an account? Log in'; }
+
+$('#q').oninput = renderGrid;
+$('#cats').onclick = e => { if (e.target.dataset.c !== undefined) { cat = e.target.dataset.c; renderTop(); renderGrid(); } };
+$('#grid').onclick = e => { const id = e.target.dataset.add; if (!id) return; const i = byId(id), have = cart[id] || 0,
+  n = Math.min(Math.max(1, parseInt($('#qn' + id).value) || 1), i.stock - have);
+  if (n < 1) return toast('All available stock is already in your cart'); cart[id] = have + n; saveCart(); toast(n + ' × ' + i.name + ' added'); };
+$('#cartBtn').onclick = () => { renderCart(); cartD.showModal(); };
+$('#lines').onclick = e => { const d = e.target.dataset; if (d.inc) cart[d.inc]++; if (d.dec) cart[d.dec]--; if (d.inc || d.dec) saveCart(); };
+$('#acct').onclick = guard(async () => { if (!me) { authMode('login'); authD.showModal(); return; } await renderOrders(); ordD.showModal(); });
+$('#swap').onclick = e => { e.preventDefault(); authMode(mode === 'login' ? 'register' : 'login'); };
+$('#authF').onsubmit = guard(async e => { e.preventDefault();
+  me = (await api('/' + mode, { method: 'POST', body: { name: $('#name').value, phone: $('#phone').value, password: $('#pw').value } })).user;
+  authD.close(); renderTop(); toast('Welcome, ' + me.name.split(' ')[0]); });
+$('#checkout').onclick = guard(async () => {
+  if (!me) { cartD.close(); authMode('register'); authD.showModal(); return toast('Log in to place your order'); }
+  await api('/orders', { method: 'POST', body: { items: Object.entries(cart).map(([id, qty]) => ({ id, qty })) } });
+  cart = {}; saveCart(); items = await api('/items'); renderGrid(); cartD.close(); await renderOrders(); ordD.showModal(); });
+$('#ords').onclick = guard(async e => { const d = e.target.dataset;
+  if (d.again) { const miss = []; orderList.find(o => o.id == d.again).items.forEach(l => { const i = byId(l.item_id), have = cart[l.item_id] || 0,
+    n = i ? Math.min(l.qty, i.stock - have) : 0; if (n > 0) cart[l.item_id] = have + n; else miss.push(l.name); });
+    saveCart(); ordD.close(); cartD.showModal(); if (miss.length) toast('Unavailable: ' + miss.join(', ')); return; }
+  if (d.paid) await api(`/orders/${d.paid}/paid`, { method: 'POST', body: { momo_ref: $('#ref' + d.paid).value } });
+  else if (d.cancel) { await api(`/orders/${d.cancel}/status`, { method: 'POST', body: { status: 'cancelled' } }); items = await api('/items'); renderGrid(); }
+  else return; await renderOrders(); });
+
+(async () => { [shop, items, { user: me }] = await Promise.all([api('/shop'), api('/items'), api('/me')]); renderTop(); renderGrid(); renderCart(); })();
+</script></body></html>

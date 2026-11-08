@@ -1,0 +1,22 @@
+{
+  "name": "pickup-shop",
+  "version": "1.0.0",
+  "description": "Single-seller online shop: buyers log in, order, pay by MoMo, pick up in person.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --env-file=.env server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cookie-parser": "^1.4.7",
+    "express": "5.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^2.5.0",
+    "pg": "^8.23.1",
+    "xlsx": "^0.18.5"
+  }
+}

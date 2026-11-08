@@ -1,0 +1,71 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Seller dashboard</title><link rel="stylesheet" href="/style.css">
+<link rel="manifest" href="/api/manifest">
+<meta name="theme-color" content="#0f5c3a">
+<link rel="icon" type="image/png" href="/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Shop"></head><body>
+<header><h1>Seller dashboard</h1><button id="inst" class="ghost" hidden>Install app</button><a class="btn" href="/">View shop</a><button class="ghost" id="out" hidden>Log out</button></header>
+<div class="wrap" id="login"><div class="card"><h2>Seller login</h2>
+<form id="lf"><div class="row"><input id="ph" type="tel" placeholder="Phone number" required></div><div class="row"><input id="pw" type="password" placeholder="Password" required></div><button class="green">Log in</button></form></div></div>
+<div class="wrap" id="app" hidden>
+<div class="card row"><label class="grow">Shop name<input id="sname" maxlength="60"></label><button class="green" id="snb">Save name</button></div>
+<div class="tabs" id="tabs"><button data-t="orders" class="on">Orders</button><button data-t="items">Items</button><button data-t="add">Add items</button><button data-t="set">Shop details</button></div>
+<section id="orders"></section>
+<section id="items" hidden></section>
+<section id="add" hidden>
+<div class="card"><h3>1. Upload a spreadsheet</h3><p class="muted">Columns: sku, name, category, description, price, stock, image_url (image_url is optional). Existing SKUs are updated, new ones are added.</p>
+<div class="row"><a class="btn" href="/api/seller/template">Download template</a><input type="file" id="sheet" accept=".xlsx,.xls,.csv"><button class="green" id="upS">Upload</button></div><div id="upR" class="muted"></div></div>
+<div class="card"><h3>2. Upload photos</h3><p class="muted">Photos are shrunk in your browser before upload. Name each photo after the item's SKU or name (for example <b>RICE-5KG.jpg</b>) and the app attaches it automatically. Items with no photo get a coloured placeholder by category.</p>
+<div class="row"><input type="file" id="imgs" accept="image/*" multiple><button class="green" id="upI">Upload photos</button></div><div id="imR" class="muted"></div></div></section>
+<section id="set" hidden><div class="card"><form id="sf"></form></div></section></div>
+<script src="/common.js"></script>
+<script>
+const NEXT = { payment_sent: ['paid', 'Confirm payment'], awaiting_payment: ['paid', 'Mark as paid'], paid: ['ready', 'Ready for pickup'], ready: ['picked_up', 'Mark picked up'] };
+let items = [];
+async function show(t) { document.querySelectorAll('#app section').forEach(s => s.hidden = s.id !== t);
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
+  if (t === 'orders') await loadOrders(); if (t === 'items') await loadItems(); if (t === 'set') await loadSettings(); }
+async function loadOrders() { const os = await api('/orders');
+  $('#orders').innerHTML = os.length ? os.map(o => `<div class="card"><div class="row"><b class="grow">${o.code} · ${esc(o.buyer)} · ${esc(o.phone)}</b><span class="pill ${o.status}">${LABEL[o.status]}</span></div>
+  <div>${o.items.map(l => `${l.qty} × ${esc(l.name)}`).join(', ')}</div><b>${cur(o.total)}</b>${o.momo_ref ? ` <span class="muted">MoMo ID: ${esc(o.momo_ref)}</span>` : ''}
+  <div class="row">${NEXT[o.status] ? `<button class="green" data-o="${o.id}" data-s="${NEXT[o.status][0]}">${NEXT[o.status][1]}</button>` : ''}
+  ${!['cancelled', 'picked_up'].includes(o.status) ? `<button class="danger" data-o="${o.id}" data-s="cancelled">Cancel and restock</button>` : ''}</div></div>`).join('') : '<p class="muted">No orders yet.</p>'; }
+async function loadItems() { items = await api('/seller/items');
+  $('#items').innerHTML = items.length ? `<table><tr><th></th><th>Item</th><th>Price</th><th>Stock</th><th></th></tr>${items.map(i => `<tr data-id="${i.id}"><td><img class="thumb" src="${esc(i.img)}" alt=""></td>
+  <td>${esc(i.name)}<br><span class="muted">${esc(i.sku)} · ${esc(i.category)}${i.active ? '' : ' · hidden'}</span></td>
+  <td><input class="p" type="number" step="0.01" value="${i.price}"></td><td><input class="s" type="number" value="${i.stock}"></td>
+  <td><button data-save>Save</button> <button class="ghost" data-hide="${i.active ? 0 : 1}">${i.active ? 'Hide' : 'Show'}</button>
+  <label class="btn ghost">Photo<input type="file" accept="image/*" data-photo hidden></label></td></tr>`).join('')}</table>` : '<p class="muted">No items yet. Add some on the Add items tab.</p>'; }
+async function loadSettings() { const s = await api('/shop');
+  $('#sf').innerHTML = [['shop_name', 'Shop name'], ['momo_number', 'MoMo number'], ['momo_name', 'Name on MoMo account'], ['pickup_address', 'Pickup address and hours']]
+    .map(([k, l]) => `<label>${l}<div class="row"><input name="${k}" value="${esc(s[k])}"></div></label>`).join('') + '<button class="green">Save details</button>'; }
+
+$('#tabs').onclick = guard(async e => { if (e.target.dataset.t) await show(e.target.dataset.t); });
+$('#orders').onclick = guard(async e => { const d = e.target.dataset; if (!d.o) return;
+  if (d.s === 'cancelled' && !confirm('Cancel this order and return the items to stock?')) return;
+  await api(`/orders/${d.o}/status`, { method: 'POST', body: { status: d.s } }); await loadOrders(); });
+$('#items').onclick = guard(async e => { const tr = e.target.closest('tr'); if (!tr) return; const id = tr.dataset.id;
+  if (e.target.dataset.save !== undefined) { await api('/seller/items/' + id, { method: 'PATCH', body: { price: +tr.querySelector('.p').value, stock: +tr.querySelector('.s').value } }); toast('Saved'); }
+  if (e.target.dataset.hide !== undefined) { await api('/seller/items/' + id, { method: 'PATCH', body: { active: +e.target.dataset.hide } }); await loadItems(); } });
+$('#items').onchange = guard(async e => { if (!e.target.matches('[data-photo]')) return; const fd = new FormData(); fd.append('images', await shrink(e.target.files[0]));
+  await api(`/seller/images?item=${e.target.closest('tr').dataset.id}`, { method: 'POST', body: fd }); await loadItems(); });
+$('#upS').onclick = guard(async () => { const fd = new FormData(); fd.append('file', $('#sheet').files[0] || '');
+  const r = await api('/seller/upload', { method: 'POST', body: fd });
+  $('#upR').innerHTML = `${r.added} added, ${r.updated} updated.` + r.skipped.map(s => `<br>${esc(s)}`).join(''); });
+$('#upI').onclick = guard(async () => { let ok = 0; const bad = [], files = [...$('#imgs').files];
+  for (const [n, f] of files.entries()) { $('#imR').textContent = `Uploading ${n + 1} of ${files.length}...`; const fd = new FormData(); fd.append('images', await shrink(f));
+    const r = await api('/seller/images', { method: 'POST', body: fd }); ok += r.matched; bad.push(...r.unmatched); }
+  $('#imR').innerHTML = `${ok} photos attached.` + (bad.length ? `<br>No matching item for: ${bad.map(esc).join(', ')}` : ''); });
+async function shrink(file) { const b = await createImageBitmap(file), s = Math.min(1, 800 / Math.max(b.width, b.height)), c = document.createElement('canvas');
+  c.width = Math.round(b.width * s); c.height = Math.round(b.height * s); c.getContext('2d').drawImage(b, 0, 0, c.width, c.height);
+  return new Promise(r => c.toBlob(x => r(new File([x], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' })), 'image/jpeg', 0.8)); }
+$('#sf').onsubmit = guard(async e => { e.preventDefault(); await api('/seller/settings', { method: 'PUT', body: Object.fromEntries(new FormData(e.target)) }); toast('Saved'); });
+$('#lf').onsubmit = guard(async e => { e.preventDefault(); const { user } = await api('/login', { method: 'POST', body: { phone: $('#ph').value, password: $('#pw').value } });
+  if (user.role !== 'seller') { await api('/logout', { method: 'POST' }); throw new Error('This account is not the seller account'); } start(); });
+$('#snb').onclick = guard(async () => { await api('/seller/settings', { method: 'PUT', body: { shop_name: $('#sname').value } }); toast('Shop name saved'); });
+$('#out').onclick = async () => { await api('/logout', { method: 'POST' }); location.reload(); };
+function start() { api('/shop').then(s => $('#sname').value = s.shop_name); $('#login').hidden = true; $('#app').hidden = false; $('#out').hidden = false; show('orders'); }
+api('/me').then(({ user }) => user?.role === 'seller' && start());
+</script></body></html>
